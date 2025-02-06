@@ -1,4 +1,6 @@
 #!/bin/bash
+source ./bug_report.sh
+source ./debug_data_structures.sh 
 DEBUG=0
 # Associative array to store compatible releases
 declare -A COMPATIBLE_RELEASES
@@ -30,7 +32,7 @@ parse_linux_compatibility() {
     return 1
 }
 
-populate_releases() {
+populate_zfs_releases() {
     # Fetch the releases page content
     curl -s https://github.com/openzfs/zfs/releases > zfs_releases.html
     mapfile -t RELEASES_PAGE < <(
@@ -43,19 +45,12 @@ populate_releases() {
         parse_linux_compatibility "https://github.com$url" "$release_name"
     done
 }
-debug_releases() {
-    # Print out the compatible releases
-    echo "Compatible ZFS Releases:"
-    for release in "${!COMPATIBLE_RELEASES[@]}"; do
-        echo "$release: Linux kernel ${COMPATIBLE_RELEASES[$release]}"
-    done
-}
 remove_html() {
     rm -f *.html
 }
 # Check if DEBUG is set to 1
 if [[ "$DEBUG" -eq 1 ]]; then
     # Call populate_releases function if DEBUG is enabled
-    populate_releases
-    debug_releases
+    populate_zfs_releases
+    debug_zfs_releases
 fi
