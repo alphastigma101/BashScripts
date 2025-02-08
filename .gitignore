@@ -1,0 +1,6 @@
+# Ignore the testing files 
+zfs-hooks/var
+zfs-hooks/etc
+zfs-hooks/boot
+zfs/hooks/lib
+zfs-hooks/usr

@@ -1,6 +1,8 @@
 #!/bin/bash
 source ./bug_report.sh
 source ./debug_data_structures.sh 
+source ./helper_functions.sh
+source ./error_handling.sh
 DEBUG=0
 # Associative array to store compatible releases
 declare -A COMPATIBLE_RELEASES

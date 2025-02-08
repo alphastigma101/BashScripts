@@ -5,7 +5,7 @@
         "request": "launch",
         "name": "Bash-Debug (hardcoded script name)",
         "cwd": "${workspaceFolder}",
-        "program": "${workspaceFolder}/zfs-hooks/compatiability.sh",
+        "program": "${workspaceFolder}/zfs-hooks/kernel_update.sh",
         "args": []
     }
     ]

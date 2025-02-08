@@ -4,19 +4,11 @@ TYPE=$(uname -m)
 KEY=""
 ZFS_KEY=""
 STATUS="$1"
-# Function to compare if version is greater than or equal to the comparison version
-version_greater_than_equal() {
-    [[ "$(echo -e "$1\n$2" | sort -V | head -n 1)" == "$2" ]]
-}
 
-# Function to compare if version is less than or equal to the comparison version
-version_less_than_equal() {
-    [[ "$(echo -e "$1\n$2" | sort -V | tail -n 1)" == "$2" ]]
-}
-
+# Function that will check to see if there is an update or not
 check_kernel() {
     # Assuming that user merged kernel source from portage
-    local pkg=$(cat var/lib/portage/world | grep -E '^sys-kernel\/[[:alpha:]]+-[[:alpha:]]+:[0-9]+\.[0-9]+\.[0-9]+$')
+    local pkg=$(cat /var/lib/portage/world | grep -E '^sys-kernel\/[[:alpha:]]+-[[:alpha:]]+:[0-9]+\.[0-9]+\.[0-9]+$')
     if echo $pkg | grep -Eq 'gentoo-sources'; then
         # Can't assign an array to the map. Therefore, make it a string
         # and convert it back into an array using mapfile
@@ -33,14 +25,13 @@ check_kernel() {
     fi
     return 0
 }
-
+# Function that will check and see if there is an update for zfs
 check_zfs() {
     # Re-Update the installed kernel map
     check_kernel
     curl -s https://packages.gentoo.org/packages/sys-fs/zfs > gentoo_zfs_sources.html
     local line=$(grep -oP 'title="\d+\.\d+\.\d+ [^"]+"' gentoo_zfs_sources.html)
-    local installed_zfs=$(cat etc/portage/package.mask/zfs | sed 's/^[^a-zA-Z]*//;s/[[:space:]]*$//')
-    local isEmpty=1
+    local installed_zfs=$(cat /etc/portage/package.mask/zfs | sed 's/^[^a-zA-Z]*//;s/[[:space:]]*$//')
     installed_zfs=$(echo "$installed_zfs" | sed 's/[[:space:]]*$//')
     # Create an array that holds zfs and zfs-kmod package versions
     mapfile -t CURRENT_ZFS <<< "$(echo "$installed_zfs" | tr ' ' '\n')"
@@ -92,15 +83,82 @@ check_zfs() {
         available_version=$(echo "$ele" | sed 's/^[^:]*://')
         if [[ "$(echo -e "$usr_version\n$available_version" | sort -V | head -n 1)" == "$usr_version" && "$usr_version" != "$available_version" ]]; then
             echo "A zfs update is available! Going to update"
-            # rm /etc/portage/package.mask/zfs
-            # echo ">=sys-fs/$ZFS_KEY" >> /etc/portage/package.mask/zfs
-            # echo ">=sys-fs/zfs-kmod-$available_version" >> /etc/portage/package.mask/zfs
+            if [ -d "/etc/portage/package.mask" ]; then 
+                rm /etc/portage/package.mask/zfs
+                echo ">=sys-fs/$ZFS_KEY" >> /etc/portage/package.mask/zfs
+                echo ">=sys-fs/zfs-kmod-$available_version" >> /etc/portage/package.mask/zfs
+            else
+                echo ">=sys-fs/$ZFS_KEY" >> /etc/portage/package.mask
+                echo ">=sys-fs/zfs-kmod-$available_version" >> /etc/portage/package.mask
+            fi
             return 0
         else 
             echo "System has the latest version already installed!"
             exit 0
         fi
     done
+    return 0
+}
+# Function that will install the new kernel 
+install_kernel() {
+    local usr_kernel_str=${INSTALLED_KERNELS[$KEY]}
+    mapfile -t usr_kernel_arr <<< "$usr_kernel_str"
+    local output=0
+    local copy_config=0
+    for build in "${BUILD_KERNELS[@]}"; do
+        version=$(echo "$build" | sed 's/^[^-]*-//')
+        eselect kernel set $build
+        cd /usr/src/linux || error "install_kernel" "Folder /usr/src/linux does not exist!"
+        # Note: config file needs to be copied somewhere else other than home
+        if [ "$copy_config" -ne 1 ]; then
+            config=$(ls /home/{$USER}/*-config | head -n 1)
+            cp -Prv $config ./.config
+            copy_config=1
+        fi
+        make menuconfig
+        make -j3 || error "install_kernel" "Failed to compile" && \
+        make modules_install || error "install_kernel" "Failed to install modules" && \
+        make install || error "install_kernel" "Failed to install kernel"
+        cp -Prv arch/x86/boot/bzImage /boot/"vmlinuz-$version-$TYPE"
+        if [ -d "/usr/src/initramfs" ]; then
+            new_path="$version-$TYPE"
+            if [[ "$output" -eq 0 ]]; then
+                echo "==================================="
+                echo "Creating the directories in /usr/src/initramfs!"
+                output=1
+            fi
+            if [ -d "/usr/src/initramfs/lib" && -d "/usr/src/initramfs/lib/modules" ]; then 
+                mkdir -vp /usr/src/initramfs/$new_path
+            else 
+                mkdir -vp /usr/src/lib && mkdir -vp /usr/src/initramfs/lib/modules
+                mkdir -vp /usr/src/initramfs/$new_path
+            fi
+            if [ ! -d "/usr/src/initramfs/lib/modules/$new_path/extra" ]; then
+                echo "Creating the extra folder to copy over the modules!" 
+                mkdir -vp /usr/src/initramfs/lib/modules/$new_path/extra
+            fi
+        fi
+    done
+    local clean_up=0
+    for usr_kernels in "${usr_kernel_arr[@]}"; do
+        if [ "$clean_up" -ne 0 ]; then
+            echo "==================================="
+            echo "Cleaning up old directories in /usr/src/initramfs/lib/modules!"
+            echo "==================================="
+            clean_up=1 
+        fi
+        # Strip off the package name and colon to extract just the version
+        usr_version=$(echo "$usr_kernels" | sed 's/^[^:]*://')
+        if [ -d "/usr/src/initramfs/$usr_version-gentoo-$TYPE" ]; then 
+            rm -r /usr/src/initramfs/lib/modules/"$usr_version-gentoo-$TYPE" || error "install_kernel" "Failed to remove $usr_version-gentoo-$TYPE from /usr/src/initramfs/lib/modules/"
+            rm -r /lib/modules/"$usr_version-gentoo-$TYPE" || error "install_kernel" "Failed to remove $usr_version-gentoo-$TYPE from /lib/modules/"
+            rm -r /boot/"vmlinuz-$usr_version-$TYPE" || error "install_kernel" "Failed to remove vmlinuz-$usr_version-$TYPE from /boot"
+        else 
+            rm -r /lib/modules/"$usr_version-gentoo-$TYPE" || error "install_kernel" "Failed to remove $usr_version-gentoo-$TYPE from /lib/modules/"
+            rm -r /boot/"vmlinuz-$usr_version-$TYPE" || error "install_kernel" "Failed to remove vmlinuz-$usr_version-$TYPE from /boot" 
+            rm -r /boot/"initramfs-$usr_version-$TYPE.img" || error "install_kernel" "Failed to remove initramfs-$usr_version-$TYPE.img from /boot" 
+        fi
+    done 
     return 0
 }
 # Function will only install the stable versions
@@ -129,11 +187,13 @@ install_kernel_resources() {
             echo "===================================" 
         fi
         if [ "$STATUS" == "$status_val" ]; then 
-            AVAILABLE_KERNELS["$status_val"]+="sys-kernel/"$KEY"":"$version_val"" "
+            AVAILABLE_KERNELS["$status_val"]+="sys-kernel/$KEY:$version_val "
         fi
     done
     mapfile -t usr_kernel_arr <<< "$usr_kernel_str"
     IFS=' ' read -r -a kernel_arr <<< "${AVAILABLE_KERNELS["$STATUS"]}"
+    local copy_config=0
+    local kernel_update=0
     for usr_kernels in "${usr_kernel_arr[@]}"; do
         # Strip off the package name and colon to extract just the version
         usr_version=$(echo "$usr_kernels" | sed 's/^[^:]*://')
@@ -153,33 +213,33 @@ install_kernel_resources() {
                     build_str+="linux-$available_version-gentoo "
                 fi
                 # Note: config file needs to be copied somewhere else other than home
-                # cp -Prv /lib/modules/$usr_version/.config /home/${USER}/"$user_version_config"
-                # emerge -v =sys-kernel/$KEY"-"$available_version
-                # emerge --deselect sys-kernel/$KEY"-"$usr_version
-                # emerge -a --depclean
+                if [ "$copy_config" -ne 1 ]; then
+                    copy_config=1
+                    kernel_update=1
+                    cp -Prv /usr/src/"linux-$usr_version-gentoo"/.config /home/${USER}/"$usr_version-gentoo-$TYPE-config"
+                fi
+                emerge -v =sys-kernel/"$KEY-$available_version" || error "install_kernel_resources" "Failed to install the new kernel!"
+                emerge --deselect sys-kernel/"$KEY-$usr_version"
             fi
         done 
-    done 
-    # Remove trailing spaces and newlines
-    build_str=$(echo "$build_str" | sed 's/[[:space:]]*$//')
-    mapfile -d ' ' -t BUILD_KERNELS <<< "$build_str"
-    return 0
-}
-
-install_kernel() {
-    for build in "${BUILD_KERNELS[@]}"; do
-        version=$(echo "$build" | sed 's/^[^-]*-//')
-        # eselect kernel set $build
-        # cd /usr/src/linux
-        # Note: config file needs to be copied somewhere else other than home
-        # cp -Prv /home/${USER}/*_config ./.config
-        # make menuconfig
-        # make -j3 ; make modules && make modules_install
-        # cp -Prv arch/x86/boot/bzImage /boot/"vmlinuz-$version-$TYPE"
     done
+    if [ "$kernel_update" -ne 0 ]; then
+        # Remove trailing spaces and newlines
+        build_str=$(echo "$build_str" | sed 's/[[:space:]]*$//')
+        mapfile -d ' ' -t BUILD_KERNELS <<< "$build_str"
+        install_kernel
+        emerge -a --depclean
+    else 
+        echo "==================================="
+        echo "Already have the latest kernel version installed!"
+        echo "Exiting script..."
+        echo "==================================="
+        exit 0
+    fi
     return 0
 }
 
+# Function that will update to the newest zfs
 install_zfs() {
     local compatible_kernel_ranges=${COMPATIBLE_RELEASES[$ZFS_KEY]}
     local installed_kernels_str=${INSTALLED_KERNELS[$KEY]}
@@ -190,11 +250,17 @@ install_zfs() {
         # Strip off the package name and colon to extract just the version
         version=$(echo "$ele" | sed 's/^[^:]*://')
         if version_greater_than_equal "$version" "$start" && version_less_than_equal "$version" "$end"; then
+            new_path="$version-$TYPE"
+            zfs_version=$(echo $ZFS_KEY | sed 's/^[^-]*-//')
             echo "Kernel version $kernel is within the range ($start - $end)."
-            # emerge -C ${CURRENT_ZFS[0]}
-            # emerge -C ${CURRENT_ZFS[1]}
-            # emerge -1 =sys-fs/$ZFS_KEY
-            return 0
+            emerge -C ${CURRENT_ZFS[0]} || error "install_zfs" "Failed to uninstall the old zfs"
+            emerge -C ${CURRENT_ZFS[1]} || error "install_zfs" "Failed to uninstall the old zfs kmod"
+            emerge -1 =sys-fs/$ZFS_KEY || error "install_zfs" "Failed to install the newer zfs!"
+            emerge -1 =sys-fs/zfs"-"kmod"-"$zfs_version || error "install_zfs" "Failed to install the new zfs-kmod!"
+            if [ -d "/usr/src/initramfs" ]; then 
+                cp -Prv /lib/modules/$new_path/extra/* /usr/src/initramfs/lib/modules/$new_path/extra/ || error "install_zfs" "Failed to copy over modules!"
+                cp -Prv /lib/modules/$new_path/modules.* /usr/src/initramfs/lib/modules/$new_path/
+            fi 
         else
             echo "Kernel version $kernel is outside the range ($start - $end)."
         fi
@@ -202,22 +268,43 @@ install_zfs() {
     return 0
 }
 update_init() {
-    # Need to check and see if the user installed genkernel or dracut
-    # Create an array that checks /usr/src/initramfs/lib/modules/*
-    # These will be the kernel versions installed
-    # There must only be two versions
-    # If there is three, remove the lowest kernel version 
-    # If not, install the third one and remove the lowest kernel version 
-    # If there is not three, then install the latest one that does not go over the range
-    # Use lddtree --copy-to-tree /usr/src/initramfs /bin/systemctl 
-    # Execute find . crap | cpio more crap | gzip 9 > /boot/initramfs-6.x.x.
-    # Note: The 6.x.x must be pulled from the range array so make a string and use it 
-    # It will be random
+    local usr_kernel_str=${INSTALLED_KERNELS[$KEY]}
+    mapfile -t usr_kernel_arr <<< "$usr_kernel_str"
+    if [ -d "/usr/src/initramfs" ]; then 
+        cd /usr/src/initramfs
+    fi 
+    for usr_kernels in "${usr_kernel_arr[@]}"; do
+        usr_version=$(echo "$usr_kernels" | sed 's/^[^:]*://')
+        if [ -d "/usr/src/initramfs/lib/modules/$usr_version-gentoo-$TYPE" ]; then
+            find . -not -path "/lib/modules/*" -o -path "./lib/modules/$usr_version-gentoo-$TYPE/*" -print0 | cpio --null --create --verbose --format=newc | gzip -9 > boot/initramfs-"$usr_version-gentoo-$TYPE".img
+            echo "======================================"
+        else 
+            Dracut=$(cat /var/lib/portage/world | grep -E '^sys-kernel\/dracut-+:[0-9]+\.[0-9]+\.[0-9]+$')
+            # Need to check to see if the string is empty
+            if [[ -n "$Dracut" ]]; then
+                # If it is not empty then generate initramfs using dracut
+                dracut --force --kver="$usr_version" /boot/initramfs-"$usr_version-gentoo-$TYPE".img || error "update_init" "Failed to create initramfs using dracut!"
+            fi
+            GenKernel=$(cat /var/lib/portage/world | grep -E '^sys-kernel\/genkernel-+:[0-9]+\.[0-9]+\.[0-9]+$')
+            # Need to check to see if the string is empty
+            if [[ -n "$GenKernel" ]]; then
+                # If it is not empty then generate initramfs using genkernel
+                genkernel --kernel-config=/usr/src/linux-$usr_version-gentoo/.config initramfs --kerneldir=/usr/src/linux-$usr_version-gentoo || error "update_init" "Failed to create initramfs using genkernel!"
+            else 
+                error "update_init" "Error: The 'Dracut' and 'GenKernel' variables are empty.\nThis indicates a bug in the script. Please file a bug report or submit a pull request to resolve the issue at: https://github.com/alphastigma101/BashScripts\n\nSteps to follow:\n1. Provide details of your environment (e.g., OS, Bash version).\n2. Describe how to reproduce the issue.\n3. Submit a pull request with a fix if possible.\n\nIf you are unable to submit a fix, please report the issue with as much detail as you can."
+            fi  
+        fi 
+    done 
     return 0
 }
 
 update_bootloader() {
-    # Find out the bootloader that is installed and run the commands to update it 
+    Grub=$(cat /var/lib/portage/world | grep -E '^sys-boot\/grub-+:[0-9]+\.[0-9]+\.[0-9]+$')
+    # Need to check to see if the string is empty
+    if [[ -n "$Grub" ]]; then
+        # If it is not empty then generate initramfs using dracut
+        grub-mkconfig -o /boot/grub/grub.cfg || error "update_bootloader" "Failed to update the bootloader!"
+    fi 
     return 0
 }
 
@@ -242,9 +329,6 @@ populate_data_structures() {
 }
 
 clean_up() {
-    # Search through the /boot directory and find the file extensions that end with .img 
-    # But they match with the vmlinuz-6.x.x 
-    # Find the lowest kernel version and remove it
     remove_html 
     return 0
 }
@@ -254,11 +338,10 @@ main() {
     check_kernel
     populate_data_structures
     install_kernel_resources "$STATUS"
-    install_kernel
     check_zfs
     install_zfs
-    #update_init
-    #update_bootloader
+    update_init
+    update_bootloader
     clean_up
 }
 main
