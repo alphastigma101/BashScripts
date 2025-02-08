@@ -31,7 +31,7 @@ check_zfs() {
     check_kernel
     curl -s https://packages.gentoo.org/packages/sys-fs/zfs > gentoo_zfs_sources.html
     local line=$(grep -oP 'title="\d+\.\d+\.\d+ [^"]+"' gentoo_zfs_sources.html)
-    local installed_zfs=$(cat /etc/portage/package.mask/zfs | sed 's/^[^a-zA-Z]*//;s/[[:space:]]*$//')
+    local installed_zfs=$(cat etc/portage/package.mask/zfs | sed 's/^[^a-zA-Z]*//;s/[[:space:]]*$//')
     installed_zfs=$(echo "$installed_zfs" | sed 's/[[:space:]]*$//')
     # Create an array that holds zfs and zfs-kmod package versions
     mapfile -t CURRENT_ZFS <<< "$(echo "$installed_zfs" | tr ' ' '\n')"
@@ -111,7 +111,7 @@ install_kernel() {
         cd /usr/src/linux || error "install_kernel" "Folder /usr/src/linux does not exist!"
         # Note: config file needs to be copied somewhere else other than home
         if [ "$copy_config" -ne 1 ]; then
-            config=$(ls /home/{$USER}/*-config | head -n 1)
+            config=$(ls /home/$(ls /home | grep -v '^root$' | head -n 1)/*-config | head -n 1)
             cp -Prv $config ./.config
             copy_config=1
         fi
@@ -218,8 +218,11 @@ install_kernel_resources() {
                     kernel_update=1
                     cp -Prv /usr/src/"linux-$usr_version-gentoo"/.config /home/${USER}/"$usr_version-gentoo-$TYPE-config"
                 fi
-                emerge -v =sys-kernel/"$KEY-$available_version" || error "install_kernel_resources" "Failed to install the new kernel!"
-                emerge --deselect sys-kernel/"$KEY-$usr_version"
+                if ! equery list =sys-kernel/"$KEY-$available_version" > /dev/null; then
+                    emerge -v =sys-kernel/"$KEY-$available_version" || error "install_kernel_resources" "Failed to install the new kernel!"
+                else
+                    echo "Kernel $KEY-$available_version is already installed."
+                fi
             fi
         done 
     done
@@ -276,7 +279,7 @@ update_init() {
     for usr_kernels in "${usr_kernel_arr[@]}"; do
         usr_version=$(echo "$usr_kernels" | sed 's/^[^:]*://')
         if [ -d "/usr/src/initramfs/lib/modules/$usr_version-gentoo-$TYPE" ]; then
-            find . -not -path "/lib/modules/*" -o -path "./lib/modules/$usr_version-gentoo-$TYPE/*" -print0 | cpio --null --create --verbose --format=newc | gzip -9 > boot/initramfs-"$usr_version-gentoo-$TYPE".img
+            find . -not -path "/lib/modules/*" -o -path "./lib/modules/$usr_version-gentoo-$TYPE/*" -print0 | cpio --null --create --verbose --format=newc | gzip -9 > boot/initramfs-"$usr_version-gentoo-$TYPE".img 
             echo "======================================"
         else 
             Dracut=$(cat /var/lib/portage/world | grep -E '^sys-kernel\/dracut-+:[0-9]+\.[0-9]+\.[0-9]+$')
