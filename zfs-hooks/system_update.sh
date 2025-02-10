@@ -129,7 +129,7 @@ install_kernel() {
                 echo "Creating the directories in /usr/src/initramfs!"
                 output=1
             fi
-            if [ -d "/usr/src/initramfs/lib" && -d "/usr/src/initramfs/lib/modules" ]; then
+            if [ -d "/usr/src/initramfs/lib" ] && [ -d "/usr/src/initramfs/lib/modules" ]; then
                 if [ ! -d "/usr/src/initramfs/lib/modules/$new_path" ]; then  
                     mkdir -vp /usr/src/initramfs/lib/modules/$new_path
                 fi
@@ -182,6 +182,9 @@ install_kernel() {
                 rm /boot/"initramfs-$usr_version-$TYPE.img" || error "install_kernel" "Failed to remove initramfs-$usr_version-$TYPE.img from /boot"
             fi 
         else
+            # TODO: It must not uninstall the new kernels that have been installed already
+            # Also /usr/src/linux-$usr_version-gentoo-$TYPE needs to be removed 
+            # And not the kernel versions that were installed 
             if [ -d "/lib/modules/$usr_version-gentoo-$TYPE" ]; then 
                 echo "==================================="
                 echo "Removing old folders from /lib/modules/$usr_version-gentoo-$TYPE"
@@ -258,12 +261,12 @@ install_kernel_resources() {
                     kernel_update=1
                     cp -Prv /usr/src/"linux-$usr_version-gentoo"/.config /home/masterkuckles/"$usr_version-gentoo-$TYPE-config"
                 fi
+                if ! equery list =sys-kernel/"$KEY-$available_version" > /dev/null; then 
+                    emerge -v =sys-kernel/"$KEY-$available_version" || error "install_kernel_resources" "Failed to install the new kernel!"
+		        else 
+			        echo "Kernel $KEY-available_version is already installed"
+		        fi
             fi
-		    if ! equery list =sys-kernel/"$KEY-$available_version" > /dev/null; then 
-                emerge -v =sys-kernel/"$KEY-$available_version" || error "install_kernel_resources" "Failed to install the new kernel!"
-		    else 
-			    echo "Kernel $KEY-available_version is already installed"
-		    fi
         done 
     done
     if [ "$kernel_update" -ne 0 ]; then
