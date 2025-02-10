@@ -18,7 +18,7 @@ check_kernel() {
         if echo $pkg | grep -Eq 'gentoo-kernel-bin'; then
             INSTALLED_KERNELS["gentoo-kernel-bin"]=$pkg
             KEY="gentoo-kernel-bin"
-        else 
+        else
             system_update_bug_report
             exit 0
         fi 
@@ -31,7 +31,7 @@ check_zfs() {
     check_kernel
     curl -s https://packages.gentoo.org/packages/sys-fs/zfs > gentoo_zfs_sources.html
     local line=$(grep -oP 'title="\d+\.\d+\.\d+ [^"]+"' gentoo_zfs_sources.html)
-    local installed_zfs=$(cat etc/portage/package.mask/zfs | sed 's/^[^a-zA-Z]*//;s/[[:space:]]*$//')
+    local installed_zfs=$(cat /etc/portage/package.mask/zfs | sed 's/^[^a-zA-Z]*//;s/[[:space:]]*$//')
     installed_zfs=$(echo "$installed_zfs" | sed 's/[[:space:]]*$//')
     # Create an array that holds zfs and zfs-kmod package versions
     mapfile -t CURRENT_ZFS <<< "$(echo "$installed_zfs" | tr ' ' '\n')"
@@ -67,7 +67,7 @@ check_zfs() {
         # Note: Issue could occur here if the DOM tree structure changes the versions around
         if [ "$STATUS" == "$status_val" ]; then 
             if [ ! -n "$ZFS_KEY" ]; then
-                ZFS_KEY="zfs-$version_val" 
+                ZFS_KEY="zfs-$version_val"
             fi
             if [ ! -n "$current" ]; then
                 current="sys-fs/zfs-$version_val"
@@ -111,15 +111,17 @@ install_kernel() {
         cd /usr/src/linux || error "install_kernel" "Folder /usr/src/linux does not exist!"
         # Note: config file needs to be copied somewhere else other than home
         if [ "$copy_config" -ne 1 ]; then
-            config=$(ls /home/$(ls /home | grep -v '^root$' | head -n 1)/*-config | head -n 1)
+            config=$(ls /home/masterkuckles/*-config | head -n 1)
             cp -Prv $config ./.config
             copy_config=1
         fi
-        make menuconfig
-        make -j3 || error "install_kernel" "Failed to compile" && \
-        make modules_install || error "install_kernel" "Failed to install modules" && \
-        make install || error "install_kernel" "Failed to install kernel"
-        cp -Prv arch/x86/boot/bzImage /boot/"vmlinuz-$version-$TYPE"
+        if [ ! -d "/lib/modules/$version-$TYPE" ]; then 
+            make menuconfig
+            make -j3 || error "install_kernel" "Failed to compile" && \
+            make modules_install || error "install_kernel" "Failed to install modules" && \
+            make install || error "install_kernel" "Failed to install kernel"
+            cp -Prv arch/x86/boot/bzImage /boot/"vmlinuz-$version-$TYPE"
+        fi
         if [ -d "/usr/src/initramfs" ]; then
             new_path="$version-$TYPE"
             if [[ "$output" -eq 0 ]]; then
@@ -127,14 +129,23 @@ install_kernel() {
                 echo "Creating the directories in /usr/src/initramfs!"
                 output=1
             fi
-            if [ -d "/usr/src/initramfs/lib" && -d "/usr/src/initramfs/lib/modules" ]; then 
-                mkdir -vp /usr/src/initramfs/$new_path
-            else 
-                mkdir -vp /usr/src/lib && mkdir -vp /usr/src/initramfs/lib/modules
-                mkdir -vp /usr/src/initramfs/$new_path
+            if [ -d "/usr/src/initramfs/lib" && -d "/usr/src/initramfs/lib/modules" ]; then
+                if [ ! -d "/usr/src/initramfs/lib/modules/$new_path" ]; then  
+                    mkdir -vp /usr/src/initramfs/lib/modules/$new_path
+                fi
+            else
+                if [ ! -d  "/usr/src/initramfs/lib" ]; then
+                    mkdir -vp /usr/src/initramfs/lib 
+                fi
+                if [ ! -d "/usr/src/initramfs/lib/modules" ]; then 
+                    mkdir -vp /usr/src/initramfs/lib/modules
+                fi
+                if [ ! -d "/usr/src/initramfs/lib/modules/$new_path" ]; then 
+                    mkdir -vp /usr/src/initramfs/lib/modules/$new_path
+                fi
             fi
             if [ ! -d "/usr/src/initramfs/lib/modules/$new_path/extra" ]; then
-                echo "Creating the extra folder to copy over the modules!" 
+                echo "Creating the extra folder to copy over the modules!"
                 mkdir -vp /usr/src/initramfs/lib/modules/$new_path/extra
             fi
         fi
@@ -145,20 +156,49 @@ install_kernel() {
             echo "==================================="
             echo "Cleaning up old directories in /usr/src/initramfs/lib/modules!"
             echo "==================================="
-            clean_up=1 
+            clean_up=1
         fi
         # Strip off the package name and colon to extract just the version
         usr_version=$(echo "$usr_kernels" | sed 's/^[^:]*://')
-        if [ -d "/usr/src/initramfs/$usr_version-gentoo-$TYPE" ]; then 
-            rm -r /usr/src/initramfs/lib/modules/"$usr_version-gentoo-$TYPE" || error "install_kernel" "Failed to remove $usr_version-gentoo-$TYPE from /usr/src/initramfs/lib/modules/"
-            rm -r /lib/modules/"$usr_version-gentoo-$TYPE" || error "install_kernel" "Failed to remove $usr_version-gentoo-$TYPE from /lib/modules/"
-            rm -r /boot/"vmlinuz-$usr_version-$TYPE" || error "install_kernel" "Failed to remove vmlinuz-$usr_version-$TYPE from /boot"
-        else 
-            rm -r /lib/modules/"$usr_version-gentoo-$TYPE" || error "install_kernel" "Failed to remove $usr_version-gentoo-$TYPE from /lib/modules/"
-            rm -r /boot/"vmlinuz-$usr_version-$TYPE" || error "install_kernel" "Failed to remove vmlinuz-$usr_version-$TYPE from /boot" 
-            rm -r /boot/"initramfs-$usr_version-$TYPE.img" || error "install_kernel" "Failed to remove initramfs-$usr_version-$TYPE.img from /boot" 
+        if [ -d "/usr/src/initramfs/$usr_version-gentoo-$TYPE" ]; then
+            if [ -d "/usr/src/initramfs/lib/modules/$usr_version-gentoo-$TYPE" ]; then 
+                echo "==================================="
+                echo "Removing old folders from /usr/src/initramfs/modules/$usr_version-gentoo-$TYPE"
+                rm -r /usr/src/initramfs/lib/modules/"$usr_version-gentoo-$TYPE" || error "install_kernel" "Failed to remove $usr_version-gentoo-$TYPE from /usr/src/initramfs/lib/modules/"
+            fi
+            if [ -d "/lib/modules/$usr_version-gentoo-$TYPE" ]; then 
+                echo "==================================="
+                echo "Removing old folders from /lib/modules/$usr_version-gentoo-$TYPE"
+                rm -r /lib/modules/"$usr_version-gentoo-$TYPE" || error "install_kernel" "Failed to remove $usr_version-gentoo-$TYPE from /lib/modules/"
+            fi 
+            if [ -d "/boot/vmlinuz-$usr_version-gentoo-$TYPE" ]; then 
+                echo "==================================="
+                echo "Removing the old vmlinuz from /boot/vmlinuz-$usr_version-gentoo-$TYPE"
+                rm  /boot/"vmlinuz-$usr_version-gentoo-$TYPE" || error "install_kernel" "Failed to remove vmlinuz-$usr_version-$TYPE from /boot"
+            fi 
+            if [ -d "/boot/initramfs-$usr_version-$TYPE.img" ]; then 
+                echo "==================================="
+                echo "Removing the old initramfs from /boot/initramfs-$usr_version-$TYPE.img"
+                rm /boot/"initramfs-$usr_version-$TYPE.img" || error "install_kernel" "Failed to remove initramfs-$usr_version-$TYPE.img from /boot"
+            fi 
+        else
+            if [ -d "/lib/modules/$usr_version-gentoo-$TYPE" ]; then 
+                echo "==================================="
+                echo "Removing old folders from /lib/modules/$usr_version-gentoo-$TYPE"
+                rm -r /lib/modules/"$usr_version-gentoo-$TYPE" || error "install_kernel" "Failed to remove $usr_version-gentoo-$TYPE from /lib/modules/"
+            fi 
+            if [ -d "/boot/vmlinuz-$usr_version-gentoo-$TYPE" ]; then 
+                echo "==================================="
+                echo "Removing the old vmlinuz from /boot/vmlinuz-$usr_version-gentoo-$TYPE"
+                rm  /boot/"vmlinuz-$usr_version-gentoo-$TYPE" || error "install_kernel" "Failed to remove vmlinuz-$usr_version-$TYPE from /boot"
+            fi 
+            if [ -d "/boot/initramfs-$usr_version-$TYPE.img" ]; then 
+                echo "==================================="
+                echo "Removing the old initramfs from /boot/initramfs-$usr_version-$TYPE.img"
+                rm /boot/"initramfs-$usr_version-$TYPE.img" || error "install_kernel" "Failed to remove initramfs-$usr_version-$TYPE.img from /boot"
+            fi 
         fi
-    done 
+    done
     return 0
 }
 # Function will only install the stable versions
@@ -216,14 +256,14 @@ install_kernel_resources() {
                 if [ "$copy_config" -ne 1 ]; then
                     copy_config=1
                     kernel_update=1
-                    cp -Prv /usr/src/"linux-$usr_version-gentoo"/.config /home/${USER}/"$usr_version-gentoo-$TYPE-config"
-                fi
-                if ! equery list =sys-kernel/"$KEY-$available_version" > /dev/null; then
-                    emerge -v =sys-kernel/"$KEY-$available_version" || error "install_kernel_resources" "Failed to install the new kernel!"
-                else
-                    echo "Kernel $KEY-$available_version is already installed."
+                    cp -Prv /usr/src/"linux-$usr_version-gentoo"/.config /home/masterkuckles/"$usr_version-gentoo-$TYPE-config"
                 fi
             fi
+		    if ! equery list =sys-kernel/"$KEY-$available_version" > /dev/null; then 
+                emerge -v =sys-kernel/"$KEY-$available_version" || error "install_kernel_resources" "Failed to install the new kernel!"
+		    else 
+			    echo "Kernel $KEY-available_version is already installed"
+		    fi
         done 
     done
     if [ "$kernel_update" -ne 0 ]; then
@@ -279,7 +319,12 @@ update_init() {
     for usr_kernels in "${usr_kernel_arr[@]}"; do
         usr_version=$(echo "$usr_kernels" | sed 's/^[^:]*://')
         if [ -d "/usr/src/initramfs/lib/modules/$usr_version-gentoo-$TYPE" ]; then
-            find . -not -path "/lib/modules/*" -o -path "./lib/modules/$usr_version-gentoo-$TYPE/*" -print0 | cpio --null --create --verbose --format=newc | gzip -9 > boot/initramfs-"$usr_version-gentoo-$TYPE".img 
+            lddtree --copy-to-tree /usr/src/initramfs /sbin/zfs 
+            lddtree --copy-to-tree /usr/src/initramfs /sbin/zpool 
+            lddtree --copy-to-tree /usr/src/initramfs /sbin/zed 
+            lddtree --copy-to-tree /usr/src/initramfs /sbin/zgenhostid
+            lddtree --copy-to-tree /usr/src/initramfs /sbin/zvol_wait 
+            find . -not -path "/lib/modules/*" -o -path "./lib/modules/$usr_version-gentoo-$TYPE/*" -print0 | cpio --null --create --verbose --format=newc | gzip -9 > boot/initramfs-"$usr_version-gentoo-$TYPE".img
             echo "======================================"
         else 
             Dracut=$(cat /var/lib/portage/world | grep -E '^sys-kernel\/dracut-+:[0-9]+\.[0-9]+\.[0-9]+$')
