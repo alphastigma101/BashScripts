@@ -14,10 +14,16 @@ check_kernel() {
         # and convert it back into an array using mapfile
         INSTALLED_KERNELS["gentoo-sources"]=$pkg
         KEY="gentoo-sources"
+        # TODO Need to find the most latest stable version and increment it by one
+        touch /etc/portage/package.mask/gentoo-sources
+        #echo >=
     else
         if echo $pkg | grep -Eq 'gentoo-kernel-bin'; then
             INSTALLED_KERNELS["gentoo-kernel-bin"]=$pkg
             KEY="gentoo-kernel-bin"
+            # TODO Need to find the most latest stable version and increment it by one
+            touch /etc/portage/package.mask/gentoo-kernel-bin
+            #echo >=
         else
             system_update_bug_report
             exit 0
@@ -102,7 +108,6 @@ check_zfs() {
 # Function that will install the new kernel 
 install_kernel() {
     local usr_kernel_str=${INSTALLED_KERNELS[$KEY]}
-    mapfile -t usr_kernel_arr <<< "$usr_kernel_str"
     local output=0
     local copy_config=0
     for build in "${BUILD_KERNELS[@]}"; do
@@ -150,6 +155,7 @@ install_kernel() {
             fi
         fi
     done
+    mapfile -t usr_kernel_arr <<< "$usr_kernel_str"
     local clean_up=0
     for usr_kernels in "${usr_kernel_arr[@]}"; do
         if [ "$clean_up" -ne 0 ]; then
@@ -181,10 +187,7 @@ install_kernel() {
                 echo "Removing the old initramfs from /boot/initramfs-$usr_version-$TYPE.img"
                 rm /boot/"initramfs-$usr_version-$TYPE.img" || error "install_kernel" "Failed to remove initramfs-$usr_version-$TYPE.img from /boot"
             fi 
-        else
-            # TODO: It must not uninstall the new kernels that have been installed already
-            # Also /usr/src/linux-$usr_version-gentoo-$TYPE needs to be removed 
-            # And not the kernel versions that were installed 
+        else 
             if [ -d "/lib/modules/$usr_version-gentoo-$TYPE" ]; then 
                 echo "==================================="
                 echo "Removing old folders from /lib/modules/$usr_version-gentoo-$TYPE"
@@ -263,6 +266,10 @@ install_kernel_resources() {
                 fi
                 if ! equery list =sys-kernel/"$KEY-$available_version" > /dev/null; then 
                     emerge -v =sys-kernel/"$KEY-$available_version" || error "install_kernel_resources" "Failed to install the new kernel!"
+                    emerge --deselect =sys-kernel/"$KEY-$available_version" || error "install_kernel_resources" "Failed to deselect the old kernels"
+                    if [ -d "/usr/src/linux-$available_version-gentoo" ]; then 
+                        rm -r  /usr/src/"linux-$available_version-gentoo"
+                    fi
 		        else 
 			        echo "Kernel $KEY-available_version is already installed"
 		        fi
@@ -299,8 +306,8 @@ install_zfs() {
             new_path="$version-$TYPE"
             zfs_version=$(echo $ZFS_KEY | sed 's/^[^-]*-//')
             echo "Kernel version $kernel is within the range ($start - $end)."
-            emerge -C ${CURRENT_ZFS[0]} || error "install_zfs" "Failed to uninstall the old zfs"
-            emerge -C ${CURRENT_ZFS[1]} || error "install_zfs" "Failed to uninstall the old zfs kmod"
+            emerge --deselect ${CURRENT_ZFS[0]} || error "install_zfs" "Failed to uninstall the old zfs"
+            emerge --deselect ${CURRENT_ZFS[1]} || error "install_zfs" "Failed to uninstall the old zfs kmod"
             emerge -1 =sys-fs/$ZFS_KEY || error "install_zfs" "Failed to install the newer zfs!"
             emerge -1 =sys-fs/zfs"-"kmod"-"$zfs_version || error "install_zfs" "Failed to install the new zfs-kmod!"
             if [ -d "/usr/src/initramfs" ]; then 
@@ -308,6 +315,7 @@ install_zfs() {
                 cp -Prv /lib/modules/$new_path/modules.* /usr/src/initramfs/lib/modules/$new_path/
             fi 
         else
+            echo "======================================"
             echo "Kernel version $kernel is outside the range ($start - $end)."
         fi
     done 
