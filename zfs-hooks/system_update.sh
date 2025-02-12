@@ -4,6 +4,7 @@ TYPE=$(uname -m)
 KEY=""
 ZFS_KEY=""
 STATUS="$1"
+CONFIG_PATH="$3"
 
 # Function that will check to see if there is an update or not
 check_kernel() {
@@ -116,7 +117,7 @@ install_kernel() {
         cd /usr/src/linux || error "install_kernel" "Folder /usr/src/linux does not exist!"
         # Note: config file needs to be copied somewhere else other than home
         if [ "$copy_config" -ne 1 ]; then
-            config=$(ls /home/masterkuckles/*-config | head -n 1)
+            config=$(ls $CONFIG_PATH*-config | head -n 1)
             cp -Prv $config ./.config
             copy_config=1
         fi
@@ -262,7 +263,7 @@ install_kernel_resources() {
                 if [ "$copy_config" -ne 1 ]; then
                     copy_config=1
                     kernel_update=1
-                    cp -Prv /usr/src/"linux-$usr_version-gentoo"/.config /home/masterkuckles/"$usr_version-gentoo-$TYPE-config"
+                    cp -Prv /usr/src/"linux-$usr_version-gentoo"/.config $CONFIG_PATH/"$usr_version-gentoo-$TYPE-config"
                 fi
                 if ! equery list =sys-kernel/"$KEY-$available_version" > /dev/null; then 
                     emerge -v =sys-kernel/"$KEY-$available_version" || error "install_kernel_resources" "Failed to install the new kernel!"
